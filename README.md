@@ -1,41 +1,164 @@
-# Neural Sanskrit Sandhi Viccheda Engine
+# Sanskrit Sandhi Processing — Project Overview
 
-## Project Overview
-This project implements a sophisticated two-stage deep learning pipeline to solve the problem of **Sanskrit Sandhi Viccheda** (phonetic de-compounding). By combining character-level Bi-directional LSTMs (BiLSTM) for junction detection and Sequence-to-Sequence (Seq2Seq) models for splitting, the engine effectively breaks complex Sanskrit compounds into their original constituent words.
+A deep-learning pipeline for two complementary Sanskrit linguistic tasks:
 
-The system is trained on an extensive corpus of over 160,000 samples, utilizing classical texts such as the **Bhagavad Gita**, **Astaadhyaayii**, and various Sanskrit literature datasets.
+1. **Sandhi (Sandhi Combiner)** — given two Sanskrit words, predict the phonetically merged compound word.
+2. **Sandhi Vicceda (Sandhi Splitter)** — given a Sanskrit compound word, predict where it splits and recover the two original words.
 
-## Technical Architecture
+Both models operate on Devanagari input, transliterate internally to SLP1 encoding, apply neural sequence-to-sequence inference, and return Devanagari output.
 
-The engine moves away from traditional rule-based grammar and uses a neural approach:
+---
 
-1.  **Preprocessing & Transliteration:** * Normalizes raw Devanagari text using `devnagri_reader.py`.
-    * Converts text into the **SLP1 (Sanskrit Library Phonetic)** scheme using `indic-transliteration` to streamline feature learning for the neural network.
-2.  **Junction Prediction (Window Model):** * A **Bi-directional LSTM** identifies the exact 5-character "junction" where the Sandhi occurs.
-    * This reduces the problem space from the entire word to a specific phonetic window.
-3.  **Neural Splitter (Seq2Seq Model):** * An **Encoder-Decoder BiLSTM** maps the 5-character junction window back into the "Word1 + Word2" components.
-    * It utilizes start (`&`) and end (`$`) tokens for accurate sequence generation.
+## Repository Layout
 
-## Repository Structure
+```
+project-root/
+├── Data/                          # Training & evaluation corpora
+│   ├── sandhiset.txt              # Primary sandhi dataset (~12 MB, main training source)
+│   ├── sanskrit_sandhi_4000.txt   # Supplementary 4000-pair sandhi set
+│   └── SandhiKosh/
+│       ├── Astaadhyaayii.txt      # Pāṇini's Ashtadhyayi (sandhi evaluation)
+│       ├── Bhagvad_Gita.txt       # Bhagavad Gita (sandhi evaluation)
+│       └── literature.txt         # General Sanskrit literature (sandhi evaluation)
+│
+├── Sandhi/                        # Sandhi combiner module
+│   ├── combine.py                 # Inference entry-point (batch + interactive)
+│   ├── single_dict_seq2seq_bilstm_sandhi.py  # Training script
+│   ├── sandhi_data_prepare.py     # Dataset parsing & vectorisation
+│   ├── devnagri_reader.py         # Devanagari text cleaner (shared utility)
+│   ├── bis2s.h5                   # Trained BiLSTM seq2seq weights
+│   ├── combine_metadata.json      # Token index & sequence-length constants
+│   ├── input.txt                  # Example input (word pairs, one per line)
+│   └── output.txt                 # Example output from combine.py
+│
+└── Sandhi_Vicceda/                # Sandhi splitter module
+    ├── splitting.py               # Inference entry-point (batch + interactive)
+    ├── sandhi_vicceda.py          # Training orchestrator
+    ├── predict_sandhi_window_bilstm.py   # Stage 1: window detection training
+    ├── split_sandhi_window_seq2seq_bilstm.py  # Stage 2: splitting training
+    ├── train_test_data_prepare.py # Dataset parsing & vectorisation
+    ├── devnagri_reader.py         # Devanagari text cleaner (shared utility)
+    ├── bilstm.h5                  # Trained window-detection model weights
+    ├── bis2s.h5                   # Trained seq2seq splitter model weights
+    ├── window_metadata.json       # Char index & max-length for window model
+    ├── split_metadata.json        # Token index & sequence lengths for split model
+    ├── input.txt                  # Example input (compound words, one per line)
+    └── output.txt                 # Example output from splitting.py
+```
 
-* `splitting.py`: The primary inference script for end-to-end prediction (CLI and File mode).
-* `predict_sandhi_window_bilstm.py`: Logic for the Junction Detection BiLSTM model.
-* `split_sandhi_window_seq2seq_bilstm.py`: Logic for the Seq2Seq Splitting model.
-* `sandhi_vicceda.py`: High-level script for training the combined pipeline.
-* `train_test_data_prepare.py`: Dataset generator that handles windowing and SLP1 conversion.
-* `devnagri_reader.py`: Text cleaning utility to remove non-Sanskrit symbols and punctuation.
-* `sandhi_breaking.ipynb`: Jupyter Notebook for interactive testing and visualization.
+---
 
-## Key Features
+## How the Two Tasks Relate
 
-* **Deep Learning Based:** Learns phonetic patterns directly from data rather than hard-coded rules.
-* **Window-Based Isolation:** Higher accuracy by focusing the Seq2Seq model on the specific point of phonetic change.
-* **Massive Corpus:** Trained on historical and grammatical datasets including Panini’s rules.
-* **Cross-Platform Support:** Works with standard Devanagari input and outputs structured splits.
+```
+Word 1 + Word 2  ──[Sandhi Combiner]──►  Compound Word
+                                               │
+                                     [Sandhi Vicceda]
+                                               │
+                                               ▼
+                                     Word 1  +  Word 2
+```
 
-## Installation & Requirements
+The two modules are **inverses of each other**. They share the same training corpus (`sandhiset.txt`), the same SLP1 transliteration scheme, and the same Devanagari text cleaner (`devnagri_reader.py`).
 
-Ensure you have Python 3.12+ installed along with the following libraries:
+---
+
+## Installation
 
 ```bash
-pip install tensorflow tf_keras numpy scikit-learn indic-transliteration h5py
+pip install tensorflow tf-keras indic-transliteration scikit-learn numpy h5py
+```
+
+Python 3.10+ is recommended. Both modules set `TF_USE_LEGACY_KERAS=1` internally.
+
+---
+
+## Data
+
+The `sandhiset.txt` file is the canonical training dataset. Each line follows the format:
+
+```
+<compound>  =>  <word1>  +  <word2>
+```
+
+Example:
+```
+रामायण  =>  राम  +  अयन
+```
+
+The `SandhiKosh/` sub-folder contains three classical texts used as held-out evaluation sets for the Sandhi Combiner.
+
+---
+
+## Quick Start
+
+### Sandhi Combiner — combine two words
+
+```bash
+# Batch mode
+python Sandhi/combine.py Sandhi/input.txt Sandhi/output.txt
+
+# Interactive mode
+python Sandhi/combine.py
+# word1, word2 : राम,अयन
+# → राम + अयन = रामयन
+```
+
+### Sandhi Vicceda — split a compound word
+
+```bash
+# Batch mode
+python Sandhi_Vicceda/splitting.py --file Sandhi_Vicceda/input.txt Sandhi_Vicceda/output.txt
+
+# Interactive mode
+python Sandhi_Vicceda/splitting.py
+# Word: हितोपदेश
+# Result: हित+उपदेश
+
+# Single word via argument
+python Sandhi_Vicceda/splitting.py हितोपदेश
+```
+
+---
+
+## Model Architecture Summary
+
+| Component | Module | Architecture |
+|---|---|---|
+| Sandhi Combiner | `Sandhi/` | BiLSTM encoder → LSTM decoder (seq2seq) |
+| Window Detector | `Sandhi_Vicceda/` | BiLSTM + Embedding + Dropout, sigmoid output per character |
+| Sandhi Splitter | `Sandhi_Vicceda/` | BiLSTM encoder → LSTM decoder (seq2seq) |
+
+All models use SLP1 one-hot or index encoding over a ~50-character Sanskrit phoneme alphabet.
+
+---
+
+## Training
+
+Retrain the Sandhi Combiner:
+```bash
+cd Sandhi
+python single_dict_seq2seq_bilstm_sandhi.py
+# Reads: ../Data/sandhiset.txt
+# Writes: bis2s.h5, combine_metadata.json
+```
+
+Retrain the Sandhi Vicceda pipeline:
+```bash
+cd Sandhi_Vicceda
+python sandhi_vicceda.py
+# Reads: ../Data/sandhiset.txt
+# Writes: bilstm.h5, bis2s.h5, window_metadata.json, split_metadata.json
+```
+
+---
+
+## Dependencies
+
+| Package | Purpose |
+|---|---|
+| `tensorflow` / `tf-keras` | Model training & inference |
+| `indic-transliteration` | Devanagari ↔ SLP1 conversion |
+| `scikit-learn` | Train/test split |
+| `numpy` | Array operations |
+| `h5py` | Safe weight loading from `.h5` files |
